@@ -19,6 +19,7 @@ struct ModelManagementView: View {
     @StateObject private var aiService = AIService()
     @StateObject private var customModelManager = CustomModelManager.shared
     @EnvironmentObject private var enhancementService: AIEnhancementService
+    @EnvironmentObject private var voiceTutorConfig: VoiceTutorConfig
     @Environment(\.modelContext) private var modelContext
     @StateObject private var whisperPrompt = WhisperPrompt()
     @ObservedObject private var warmupCoordinator = WhisperModelWarmupCoordinator.shared
@@ -49,6 +50,7 @@ struct ModelManagementView: View {
 
                 defaultModelSection
                 languageSelectionSection
+                VoiceTutorSettingsSection(config: voiceTutorConfig)
                 availableModelsSection
             }
             .padding(40)

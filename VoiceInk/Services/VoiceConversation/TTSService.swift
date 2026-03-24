@@ -13,9 +13,9 @@ class TTSService: ObservableObject {
     private var currentTask: Task<Void, Never>?
     private var synthesizer: AVSpeechSynthesizer?
 
-    // MVP defaults — ElevenLabs "Rachel" voice + Turbo v2.5 model
+    // Default voice (Rachel). Model ID is configurable via VoiceTutorConfig.
     private let defaultVoiceId = "21m00Tcm4TlvDq8ikWAM"
-    private let ttsModelId = "eleven_turbo_v2_5"
+    var ttsModelId = "eleven_turbo_v2_5"
 
     // PCM format matching ElevenLabs pcm_16000 output: 16kHz, 16-bit signed LE, mono
     private let pcmFormat = AVAudioFormat(
@@ -45,7 +45,12 @@ class TTSService: ObservableObject {
     func speak(text: String) async {
         guard !text.isEmpty else { return }
 
-        // Check for ElevenLabs API key, fall back to system TTS
+        // Use system TTS if configured or no ElevenLabs key
+        if ttsModelId == "system" {
+            await speakWithSystemTTS(text: text)
+            return
+        }
+
         guard let apiKey = APIKeyManager.shared.getAPIKey(forProvider: "ElevenLabs"), !apiKey.isEmpty else {
             logger.info("No ElevenLabs API key, falling back to system TTS")
             await speakWithSystemTTS(text: text)

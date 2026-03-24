@@ -27,6 +27,7 @@ class VoiceConversationManager: ObservableObject {
     private let transcriptionModelManager: TranscriptionModelManager
     private let serviceRegistry: TranscriptionServiceRegistry
     private let recorder = Recorder()
+    let config: VoiceTutorConfig
 
     var windowManager: VoiceLoopWindowManager?
 
@@ -59,10 +60,12 @@ class VoiceConversationManager: ObservableObject {
         aiService: AIService,
         transcriptionModelManager: TranscriptionModelManager,
         whisperModelManager: WhisperModelManager,
-        modelContext: ModelContext
+        modelContext: ModelContext,
+        config: VoiceTutorConfig
     ) {
         self.aiService = aiService
         self.transcriptionModelManager = transcriptionModelManager
+        self.config = config
         self.serviceRegistry = TranscriptionServiceRegistry(
             modelProvider: whisperModelManager,
             modelsDirectory: whisperModelManager.modelsDirectory,
@@ -165,7 +168,14 @@ class VoiceConversationManager: ObservableObject {
 
         do {
             // 1. Transcribe
-            guard let model = transcriptionModelManager.currentTranscriptionModel else {
+            // Use config's STT model if set, otherwise app default
+            let model: any TranscriptionModel
+            if let configModelName = config.sttModelName,
+               let configModel = transcriptionModelManager.allAvailableModels.first(where: { $0.name == configModelName }) {
+                model = configModel
+            } else if let defaultModel = transcriptionModelManager.currentTranscriptionModel {
+                model = defaultModel
+            } else {
                 logger.error("No transcription model selected")
                 state = .idle
                 return
@@ -235,36 +245,36 @@ class VoiceConversationManager: ObservableObject {
     }
 
     private func callLLM(messages: [ChatMessage]) async throws -> String {
-        let timeout: TimeInterval = 60 // Longer timeout for conversational responses
+        let timeout: TimeInterval = 60
         let fullSystemPrompt = buildSystemPrompt()
 
-        switch aiService.selectedProvider {
+        // Use config's provider/model
+        let provider = config.resolvedAIProvider ?? aiService.selectedProvider
+        let modelName = config.llmModel
+        let apiKey = APIKeyManager.shared.getAPIKey(forProvider: provider.rawValue) ?? aiService.apiKey
+
+        switch provider {
         case .anthropic:
             return try await AnthropicLLMClient.chatCompletion(
-                apiKey: aiService.apiKey,
-                model: aiService.currentModel,
+                apiKey: apiKey,
+                model: modelName,
                 messages: messages,
                 systemPrompt: fullSystemPrompt,
                 timeout: timeout
             )
         case .ollama:
-            // Build a combined prompt for Ollama
             let combinedPrompt = messages.map { msg in
-                if msg.role == "user" {
-                    return "User: \(msg.content)"
-                } else {
-                    return "Assistant: \(msg.content)"
-                }
+                msg.role == "user" ? "User: \(msg.content)" : "Assistant: \(msg.content)"
             }.joined(separator: "\n")
-            return try await aiService.enhanceWithOllama(text: combinedPrompt, systemPrompt: systemPrompt)
+            return try await aiService.enhanceWithOllama(text: combinedPrompt, systemPrompt: fullSystemPrompt)
         default:
-            guard let baseURL = URL(string: aiService.selectedProvider.baseURL) else {
+            guard let baseURL = URL(string: provider.baseURL) else {
                 throw VoiceConversationError.invalidProviderURL
             }
             return try await OpenAILLMClient.chatCompletion(
                 baseURL: baseURL,
-                apiKey: aiService.apiKey,
-                model: aiService.currentModel,
+                apiKey: apiKey,
+                model: modelName,
                 messages: messages,
                 systemPrompt: fullSystemPrompt,
                 temperature: 0.7,
