@@ -21,6 +21,7 @@ class VoiceConversationManager: ObservableObject {
 
     let history = ConversationHistory()
     let ttsService = TTSService()
+    let learningProgress = LearningProgress()
 
     private let aiService: AIService
     private let transcriptionModelManager: TranscriptionModelManager
@@ -33,10 +34,23 @@ class VoiceConversationManager: ObservableObject {
     private var currentRecordingURL: URL?
 
     var systemPrompt = """
-        You are a patient, thorough teacher. The user is a developer who wants to deeply \
-        understand concepts. Explain clearly, use analogies, and build understanding step by step. \
-        Keep answers focused but don't oversimplify. If the user seems to understand, go deeper. \
-        Respond conversationally — this will be spoken aloud.
+        You are a personal Socratic tutor. Your job is to help the user deeply understand \
+        any topic they ask about — technical, scientific, historical, philosophical, or anything else.
+
+        TEACHING STYLE:
+        - Explain concepts clearly using analogies and real-world examples
+        - Adapt your level based on the user's responses — simpler if they're confused, deeper if they get it
+        - After explaining a concept, ask ONE open-ended comprehension question to test understanding
+        - If they answer correctly: acknowledge it, then go deeper or ask a harder follow-up
+        - If they answer incorrectly: don't just say "wrong" — identify the specific misunderstanding and re-explain from a different angle, then ask again
+        - If they answer partially: acknowledge what's right, clarify what's missing
+
+        CONVERSATION RULES:
+        - This will be spoken aloud — keep sentences natural and conversational
+        - Don't use bullet points, numbered lists, or formatting — speak in flowing prose
+        - Don't read out code, URLs, or file paths — describe concepts verbally
+        - Keep explanations thorough but not rambling — aim for 30-60 seconds of speech per turn
+        - When quizzing, pause and wait for the user's answer before continuing
         """
 
     private let recordingsDirectory: URL
@@ -209,8 +223,20 @@ class VoiceConversationManager: ObservableObject {
 
     // MARK: - LLM Call
 
+    private func buildSystemPrompt() -> String {
+        var prompt = systemPrompt
+        if let progressContext = learningProgress.progressSummary() {
+            prompt += "\n\nLEARNER CONTEXT:\n\(progressContext)"
+        }
+        if let topic = learningProgress.currentTopic {
+            prompt += "\n\nCurrent topic: \(topic)"
+        }
+        return prompt
+    }
+
     private func callLLM(messages: [ChatMessage]) async throws -> String {
         let timeout: TimeInterval = 60 // Longer timeout for conversational responses
+        let fullSystemPrompt = buildSystemPrompt()
 
         switch aiService.selectedProvider {
         case .anthropic:
@@ -218,7 +244,7 @@ class VoiceConversationManager: ObservableObject {
                 apiKey: aiService.apiKey,
                 model: aiService.currentModel,
                 messages: messages,
-                systemPrompt: systemPrompt,
+                systemPrompt: fullSystemPrompt,
                 timeout: timeout
             )
         case .ollama:
@@ -240,7 +266,7 @@ class VoiceConversationManager: ObservableObject {
                 apiKey: aiService.apiKey,
                 model: aiService.currentModel,
                 messages: messages,
-                systemPrompt: systemPrompt,
+                systemPrompt: fullSystemPrompt,
                 temperature: 0.7,
                 timeout: timeout
             )
